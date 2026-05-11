@@ -9,6 +9,7 @@ import {
   softDeleteMessage,
   softDeleteThreadMessagesAfter,
 } from "../lib/messages";
+import { getDebate, endDebate } from "../lib/debate";
 import type { Thread, Message, Channel } from "../types";
 
 type Props = {
@@ -16,7 +17,7 @@ type Props = {
   channel: Channel;
   workspaceRoot: string;
   parentMessage: Message | null;
-  onCallAgent: (agentName: string, channel: Channel, workspaceRoot: string, sessionId: string, threadId: string, prompt: string) => Promise<void>;
+  onCallAgent: (agentName: string, channel: Channel, workspaceRoot: string, sessionId: string, threadId: string, prompt: string) => Promise<{ fullText: string }>;
   /** 호출자가 탭을 닫을 때 사용 — ThreadView 내부에서는 더 이상 close 버튼이 없음 */
   onClose?: () => void;
   onOpenFile?: (path: string, line?: number, col?: number) => void;
@@ -65,6 +66,23 @@ export function ThreadView({ thread, channel, workspaceRoot, parentMessage, onCa
   async function onSend(text: string) {
     setError(null);
     const r = route(text);
+
+    // 토론 thread 안에서 /debate end 처리
+    if (r.kind === "slash" && r.command === "debate" && r.args[0] === "end") {
+      const debate = await getDebate(thread.id);
+      if (!debate || debate.ended) {
+        setError("이 스레드는 진행 중인 토론이 아닙니다.");
+        return;
+      }
+      await endDebate(thread.id, "user_command");
+      await supabase.from("chord_messages").insert({
+        session_id: thread.session_id,
+        thread_id: thread.id,
+        role: "system",
+        content: "토론 종료 (사용자 명령).",
+      });
+      return;
+    }
 
     // 1. user 메시지 INSERT (thread_id 부착해서 한 번에)
     const { data: userMsg, error: insErr } = await supabase

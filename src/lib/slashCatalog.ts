@@ -47,6 +47,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 
   { label: "/agent list", insert: "/agent list", desc: "에이전트 정의 위치 안내", kind: "chord" },
 
+  { label: "/debate <주제>", insert: "/debate ", desc: "페르소나 자동 체이닝 토론 시작", kind: "chord" },
+  { label: "/debate end", insert: "/debate end", desc: "현재 채널의 진행 중 토론 종료", kind: "chord" },
+  { label: "/debate status", insert: "/debate status", desc: "진행 중 토론 상태 보기", kind: "chord" },
+
   { label: "/workspace create <name> <path>", insert: "/workspace create ", desc: "워크스페이스 생성", kind: "chord" },
   { label: "/workspace list", insert: "/workspace list", desc: "워크스페이스 목록", kind: "chord" },
 

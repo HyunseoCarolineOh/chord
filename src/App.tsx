@@ -23,6 +23,17 @@ import {
 } from "./lib/messages";
 import { route } from "./lib/router";
 import { runSlash } from "./lib/slash";
+import {
+  buildDebatePrompt,
+  recordSpeech,
+  endDebate,
+  getDebate,
+  hasConclusionMarker,
+  parseNextSpeaker,
+  totalSpeeches,
+  MAX_TOTAL_SPEECHES,
+  CONCLUSION_MARKER,
+} from "./lib/debate";
 import { supabase } from "./lib/supabase";
 import { runQuery } from "./lib/sidecar";
 import { loadAgent, resolveAgentPath } from "./lib/agentLoader";
@@ -370,8 +381,9 @@ function App() {
   );
 
   // 스레드 안에서 에이전트 호출 (cron 자동 라우팅용). 메인 messages state는 갱신 안 함 — ThreadView가 자체 reload.
+  // 반환값 fullText는 /debate 자동 체이닝에서 다음 발화자 파싱에 쓰임.
   const callAgentInThread = useCallback(
-    async (agentName: string, channel: Channel, workspaceRoot: string, sessionId: string, threadId: string, prompt: string) => {
+    async (agentName: string, channel: Channel, workspaceRoot: string, sessionId: string, threadId: string, prompt: string): Promise<{ fullText: string }> => {
       // INSERT 시 thread_id 같이 박아야 realtime filter `thread_id=eq.<id>` 매칭됨
       const { data: ph, error: insErr } = await supabase
         .from("chord_messages")
@@ -386,11 +398,12 @@ function App() {
         .single();
       if (insErr || !ph) {
         console.error("placeholder insert failed", insErr);
-        return;
+        return { fullText: "" };
       }
       const placeholder = ph as Message;
 
       const toolCalls: unknown[] = [];
+      let fullText = "";
       const agentDef = await loadAgent(workspaceRoot, agentName);
       const sessionFiles = await listSessionFiles(sessionId).catch(() => []);
 
@@ -437,16 +450,96 @@ function App() {
             onToolResult: (tr) => { toolCalls.push({ kind: "result", ...tr }); },
           },
         );
+        fullText = final.fullText;
         await updateMessage(placeholder.id, { content: final.fullText, tool_calls: toolCalls });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        const errBody = accumulated + `\n\n[error] ${msg}`;
+        fullText = errBody;
         await updateMessage(placeholder.id, {
-          content: accumulated + `\n\n[error] ${msg}`,
+          content: errBody,
           tool_calls: toolCalls,
         });
       }
+      return { fullText };
     },
     [],
+  );
+
+  // /debate 자동 체이닝: 한 발화자 호출 → 응답 파싱 → 종료 조건 체크 → 다음 발화자 재귀.
+  // 일시정지(다음 멘션 없음)는 그냥 return — 사용자가 thread에 새 메시지 보내면 ThreadView가 재개.
+  const dispatchDebateSpeaker = useCallback(
+    async (
+      speakerKey: string,
+      threadId: string,
+      participants: string[],
+      channel: Channel,
+      workspaceRoot: string,
+      sessionId: string,
+    ): Promise<void> => {
+      const debate = await getDebate(threadId);
+      if (!debate || debate.ended) return;
+      if (totalSpeeches(debate) >= MAX_TOTAL_SPEECHES) {
+        await endDebate(threadId, "max_total_speeches");
+        await supabase.from("chord_messages").insert({
+          session_id: sessionId,
+          thread_id: threadId,
+          role: "system",
+          content: `누적 발화 ${MAX_TOTAL_SPEECHES}회 도달 — 안전망으로 토론을 종료합니다.`,
+        });
+        return;
+      }
+
+      const others = participants.filter((p) => p !== speakerKey);
+      const prompt = await buildDebatePrompt({
+        threadId,
+        topic: debate.topic,
+        speakerKey,
+        available: others,
+      });
+
+      const { fullText } = await callAgentInThread(
+        speakerKey,
+        channel,
+        workspaceRoot,
+        sessionId,
+        threadId,
+        prompt,
+      );
+
+      await recordSpeech(threadId, speakerKey);
+
+      if (hasConclusionMarker(fullText, CONCLUSION_MARKER)) {
+        await endDebate(threadId, "concluded");
+        await supabase.from("chord_messages").insert({
+          session_id: sessionId,
+          thread_id: threadId,
+          role: "system",
+          content: `@${speakerKey}가 결론을 제시해 토론을 마칩니다.`,
+        });
+        return;
+      }
+
+      // 다시 fetch (UPDATE 사이 사용자가 /debate end 쳤을 수 있음)
+      const fresh = await getDebate(threadId);
+      if (!fresh || fresh.ended) return;
+      if (totalSpeeches(fresh) >= MAX_TOTAL_SPEECHES) {
+        await endDebate(threadId, "max_total_speeches");
+        await supabase.from("chord_messages").insert({
+          session_id: sessionId,
+          thread_id: threadId,
+          role: "system",
+          content: `누적 발화 ${MAX_TOTAL_SPEECHES}회 도달 — 안전망으로 토론을 종료합니다.`,
+        });
+        return;
+      }
+
+      const nextKey = parseNextSpeaker(fullText, others);
+      if (!nextKey) return; // 일시정지
+      if (nextKey === speakerKey) return; // 자기 자신 멘션 무시
+      await dispatchDebateSpeaker(nextKey, threadId, participants, channel, workspaceRoot, sessionId);
+    },
+    [callAgentInThread],
   );
 
   const onSend = useCallback(
@@ -462,7 +555,7 @@ function App() {
       const r = route(text);
 
       if (r.kind === "slash") {
-        const result = await runSlash(channel, workspace, r.command, r.args);
+        const result = await runSlash(channel, workspace, r.command, r.args, activeSession);
 
         if (!result.ok) {
           setError(result.message);
@@ -486,6 +579,23 @@ function App() {
         } else if (channel.active_session_id) {
           await insertMessage({ sessionId: channel.active_session_id, role: "system", content: result.message });
           setMessages(await listMessages(channel.active_session_id));
+        }
+
+        // /debate 시작 — thread tab을 열고 첫 발화자 dispatch 시작
+        if (result.debate?.kind === "start" && activeSession) {
+          const d = result.debate;
+          openThreadTab(d.thread, null);
+          // 메인 채널에 thread chip이 즉시 보이도록 summaries 재로드
+          void reloadThreadSummaries();
+          // 첫 발화자 호출 (await — 체이닝 loop가 자체적으로 doneed)
+          void dispatchDebateSpeaker(
+            d.firstSpeaker,
+            d.thread.id,
+            d.participants,
+            channel,
+            workspace.root_path,
+            activeSession.id,
+          );
         }
         return;
       }
@@ -549,6 +659,10 @@ function App() {
       loadSessionAndMessages,
       reloadChannels,
       callAgent,
+      callAgentInThread,
+      dispatchDebateSpeaker,
+      openThreadTab,
+      reloadThreadSummaries,
     ],
   );
 

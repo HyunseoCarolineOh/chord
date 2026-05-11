@@ -12,17 +12,37 @@
  */
 
 import { supabase } from "./supabase";
-import type { Session, Channel, Workspace } from "../types";
+import type { Session, Channel, Workspace, Thread } from "../types";
+import {
+  startDebate as createDebateSession,
+  getActiveDebateForChannel,
+  endDebate,
+  totalSpeeches,
+} from "./debate";
+
+/** /debate 결과 — App.tsx에서 받아 dispatchSpeaker로 자동 체이닝을 시작한다. */
+export type DebateIntent =
+  | { kind: "start"; thread: Thread; firstSpeaker: string; participants: string[]; topic: string }
+  | { kind: "end" };
 
 export type SlashResult =
-  | { ok: true; message: string; channelChanged?: boolean; workspaceChanged?: boolean }
+  | {
+      ok: true;
+      message: string;
+      channelChanged?: boolean;
+      workspaceChanged?: boolean;
+      debate?: DebateIntent;
+    }
   | { ok: false; message: string };
+
+const FALLBACK_DEBATE_PARTICIPANTS = ["leader", "optimist", "skeptic"];
 
 export async function runSlash(
   channel: Channel,
   workspace: Workspace,
   command: string,
   args: string[],
+  activeSession?: Session | null,
 ): Promise<SlashResult> {
   switch (command) {
     case "session":
@@ -33,9 +53,87 @@ export async function runSlash(
       return runAgent(args);
     case "workspace":
       return runWorkspace(args);
+    case "debate":
+      return runDebate(channel, activeSession ?? null, args);
     default:
       return { ok: false, message: `unknown command: /${command}` };
   }
+}
+
+// ===== /debate =====
+async function runDebate(
+  channel: Channel,
+  activeSession: Session | null,
+  args: string[],
+): Promise<SlashResult> {
+  const sub = args[0];
+
+  if (sub === "end") {
+    const active = await getActiveDebateForChannel(channel.id);
+    if (!active) return { ok: false, message: "이 채널에 진행 중인 토론이 없습니다." };
+    await endDebate(active.thread_id, "user_command");
+    return {
+      ok: true,
+      message: `토론 종료 (thread=${active.thread_id.slice(0, 8)}…)`,
+      debate: { kind: "end" },
+    };
+  }
+
+  if (sub === "status") {
+    const active = await getActiveDebateForChannel(channel.id);
+    if (!active) return { ok: true, message: "진행 중인 토론 없음." };
+    return {
+      ok: true,
+      message:
+        `진행 중: "${active.topic}"\n` +
+        `현재 발화자: @${active.current_speaker}\n` +
+        `누적 발화: ${totalSpeeches(active)}`,
+    };
+  }
+
+  // /debate <주제>
+  const topic = args.join(" ").trim();
+  if (!topic) {
+    return {
+      ok: false,
+      message: "토론 주제가 필요합니다: /debate <주제> | /debate end | /debate status",
+    };
+  }
+  if (!activeSession) {
+    return {
+      ok: false,
+      message: 'active session이 없습니다 — "/session start <name>" 으로 먼저 세션을 여세요.',
+    };
+  }
+
+  // 참여자 결정 — agent_ids 우선, 2명 미만이면 기본 페르소나로 채움
+  let participants: string[] = [...channel.agent_ids];
+  if (participants.length < 2) {
+    for (const p of FALLBACK_DEBATE_PARTICIPANTS) {
+      if (!participants.includes(p)) participants.push(p);
+      if (participants.length >= 2) break;
+    }
+  }
+  if (participants.length < 2) {
+    return {
+      ok: false,
+      message:
+        "토론에는 최소 2명의 참여자가 필요합니다. /channel agents add <name> 으로 추가하세요.",
+    };
+  }
+
+  const { thread, firstSpeaker } = await createDebateSession({
+    topic,
+    channel,
+    session: activeSession,
+    participants,
+  });
+
+  return {
+    ok: true,
+    message: `🎬 토론 시작 — "${topic}" (첫 발화자: @${firstSpeaker})`,
+    debate: { kind: "start", thread, firstSpeaker, participants, topic },
+  };
 }
 
 // ===== /session =====
