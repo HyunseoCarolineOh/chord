@@ -16,6 +16,21 @@ export async function createThread(
   parentMessageId: string | null,
   title: string,
 ): Promise<Thread> {
+  // 같은 parent_message_id로 이미 thread가 있으면 그걸 재사용 (중복 INSERT 방지).
+  // 같은 메시지에서 ↳ thread 버튼을 빠르게 두 번 누르거나, 편집 재응답으로 같은 부모에
+  // 또 다른 thread가 만들어지는 경우를 막는다. parent_message_id가 null이면 분기 keyN/A.
+  if (parentMessageId) {
+    const { data: existing } = await supabase
+      .from("chord_threads")
+      .select("*")
+      .eq("session_id", sessionId)
+      .eq("parent_message_id", parentMessageId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (existing) return existing as Thread;
+  }
+
   const { data, error } = await supabase
     .from("chord_threads")
     .insert({ session_id: sessionId, parent_message_id: parentMessageId, title })

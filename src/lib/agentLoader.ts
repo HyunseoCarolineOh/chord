@@ -8,6 +8,18 @@ import type { AgentDef } from "../types";
 
 const FRONTMATTER_RE = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n([\s\S]*)$/;
 
+// 사용자가 오늘 날짜·요일·현재 시각 등을 물을 때 LLM이 추측해서
+// 틀린 요일을 답하는 일을 막기 위한 공통 지침. 모든 에이전트 systemPrompt 뒤에 붙는다.
+// claude_code preset에 Bash가 이미 포함돼 있으므로 별도 도구 허용 설정은 불필요.
+export const DATE_TOOL_GUIDANCE = `
+
+## 날짜·요일 처리 규칙
+사용자가 오늘 날짜, 요일, 현재 시각을 물어보면 학습 데이터로 추측하지 말고 반드시 실행 도구로 직접 조회한 결과만 답하라.
+- Windows(PowerShell): \`Get-Date -Format "yyyy-MM-dd (dddd) HH:mm"\`
+- macOS/Linux(Bash): \`date "+%Y-%m-%d (%A) %H:%M"\`
+LLM의 날짜→요일 계산은 모듈로 산술이라 자주 틀린다. 절대 추측 금지.
+`;
+
 let cachedHome: string | null = null;
 async function home(): Promise<string> {
   if (cachedHome) return cachedHome;

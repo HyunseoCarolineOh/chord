@@ -2,11 +2,14 @@ import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 
 import { AgentAvatar } from "./AgentAvatar";
 import { filterSlash, type SlashCommand } from "../lib/slashCatalog";
 
+export type PermissionMode = "default" | "plan" | "bypassPermissions";
+
 type Props = {
   disabled?: boolean;
   placeholder?: string;
   agents?: string[];
   onSend: (text: string) => void | Promise<void>;
+  permMode?: PermissionMode;
 };
 
 const ITEM_MIME = "application/x-chord-item";
@@ -78,7 +81,7 @@ function filterAgents(agents: string[], query: string, limit = 8): string[] {
   return agents.filter((a) => a.toLowerCase().includes(q)).slice(0, limit);
 }
 
-export function Composer({ disabled, placeholder, agents = [], onSend }: Props) {
+export function Composer({ disabled, placeholder, agents = [], onSend, permMode = "default" }: Props) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [hover, setHover] = useState(false);
@@ -235,6 +238,12 @@ export function Composer({ disabled, placeholder, agents = [], onSend }: Props) 
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      {permMode !== "default" && (
+        <div className={`composer-mode-chip mode-${permMode}`} title="Shift+Tab — 모드 전환">
+          {permMode === "plan" ? "📝 plan mode" : "⚡ bypass permissions"}
+          <span className="mode-hint">Shift+Tab</span>
+        </div>
+      )}
       {showAutocomplete && (
         <div className="autocomplete" role="listbox" onMouseDown={(e) => e.preventDefault()}>
           {suggestions.length === 0 ? (

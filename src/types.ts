@@ -22,7 +22,8 @@ export type Channel = {
   id: string;
   workspace_id: string;
   name: string;
-  cwd: string | null;
+  /** cwd[0]: 기본 작업 디렉토리. cwd[1..]: 보조 컨텍스트로 system prompt에 첨부 */
+  cwd: string[] | null;
   allowed_tools: string[];
   agent_ids: string[];
   active_session_id: string | null;
@@ -51,7 +52,7 @@ export type Message = {
   agent_name: string | null;
   content: string;
   tool_calls: unknown[];
-  source: "user" | "cron" | "webhook";
+  source: "user" | "cron" | "webhook" | "fork";
   created_at: string;
   deleted_at: string | null;
   edited_at: string | null;

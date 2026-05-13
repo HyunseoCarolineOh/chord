@@ -295,7 +295,7 @@ async function runChannel(workspace: Workspace, channel: Channel, args: string[]
         .insert({
           workspace_id: workspace.id,
           name,
-          cwd: cwd ?? workspace.root_path,
+          cwd: [cwd ?? workspace.root_path],
           allowed_tools: ["Read", "Edit", "Write", "Grep", "Glob", "Bash"],
           agent_ids: [],
         })
@@ -305,14 +305,35 @@ async function runChannel(workspace: Workspace, channel: Channel, args: string[]
       return { ok: true, message: `# ${(data as Channel).name} created`, workspaceChanged: true };
     }
     case "cwd": {
-      const cwd = args.slice(1).join(" ");
-      if (!cwd) return { ok: false, message: "/channel cwd <path>" };
+      // /channel cwd <path>            → 기본 cwd 교체 (보조 cwd는 유지)
+      // /channel cwd add <path>        → 보조 cwd로 추가
+      // /channel cwd remove <path>     → 해당 경로 제거
+      // /channel cwd set <p1> [p2 ...] → 전체 교체
+      const op = args[1];
+      const current = channel.cwd ?? [];
+      let next: string[];
+      if (op === "add") {
+        const path = args.slice(2).join(" ");
+        if (!path) return { ok: false, message: "/channel cwd add <path>" };
+        next = current.includes(path) ? current : [...current, path];
+      } else if (op === "remove") {
+        const path = args.slice(2).join(" ");
+        if (!path) return { ok: false, message: "/channel cwd remove <path>" };
+        next = current.filter((p) => p !== path);
+      } else if (op === "set") {
+        next = args.slice(2).filter(Boolean);
+        if (next.length === 0) return { ok: false, message: "/channel cwd set <p1> [p2 ...]" };
+      } else {
+        const path = args.slice(1).join(" ");
+        if (!path) return { ok: false, message: "/channel cwd <path> | add <path> | remove <path> | set <p1> ..." };
+        next = current.length > 0 ? [path, ...current.slice(1)] : [path];
+      }
       const { error } = await supabase
         .from("chord_channels")
-        .update({ cwd })
+        .update({ cwd: next })
         .eq("id", channel.id);
       if (error) return { ok: false, message: error.message };
-      return { ok: true, message: `cwd → ${cwd}`, workspaceChanged: true };
+      return { ok: true, message: `cwd → [${next.join(", ")}]`, workspaceChanged: true };
     }
     case "allow": {
       const tools = (args[1] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -401,7 +422,7 @@ async function runChannel(workspace: Workspace, channel: Channel, args: string[]
       return {
         ok: false,
         message:
-          "usage: /channel [create <name> [cwd] | cwd <path> | allow Tool1,... | agents add|remove <name> | archive | mcp add|remove|list]",
+          "usage: /channel [create <name> [cwd] | cwd <path>|add <path>|remove <path>|set <p1> ... | allow Tool1,... | agents add|remove <name> | archive | mcp add|remove|list]",
       };
   }
 }

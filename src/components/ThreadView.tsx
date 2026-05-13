@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { listThreadMessages } from "../lib/threads";
-import { Composer } from "./Composer";
+import { Composer, type PermissionMode } from "./Composer";
 import { MessageList } from "./MessageList";
+import { ForkDialog } from "./ForkDialog";
 import { supabase } from "../lib/supabase";
 import { route } from "../lib/router";
 import {
@@ -11,6 +12,7 @@ import {
 } from "../lib/messages";
 import { getDebate, endDebate } from "../lib/debate";
 import type { Thread, Message, Channel } from "../types";
+import type { ForkResult } from "../lib/fork";
 
 type Props = {
   thread: Thread;
@@ -21,11 +23,29 @@ type Props = {
   /** 호출자가 탭을 닫을 때 사용 — ThreadView 내부에서는 더 이상 close 버튼이 없음 */
   onClose?: () => void;
   onOpenFile?: (path: string, line?: number, col?: number) => void;
+  permMode?: PermissionMode;
+  /** 포크 대상 후보 (워크스페이스 내 active 채널 목록) */
+  forkTargets?: Channel[];
+  /** 포크 완료 후 부모에서 후속 처리 (탭 열기 등) */
+  onForked?: (result: ForkResult, targetChannelId: string) => void;
 };
 
-export function ThreadView({ thread, channel, workspaceRoot, parentMessage, onCallAgent, onOpenFile }: Props) {
+export function ThreadView({ thread, channel, workspaceRoot, parentMessage, onCallAgent, onOpenFile, permMode, forkTargets, onForked }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // 메시지 선택 / 포크
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [forkOpen, setForkOpen] = useState(false);
+  const toggleSelect = useCallback((m: Message) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(m.id)) next.delete(m.id);
+      else next.add(m.id);
+      return next;
+    });
+  }, []);
 
   const reload = useCallback(async () => {
     setMessages(await listThreadMessages(thread.id));
@@ -211,6 +231,27 @@ export function ThreadView({ thread, channel, workspaceRoot, parentMessage, onCa
           <span className="thread-mark">↳</span>
           {thread.name ?? thread.title ?? "(thread)"}
         </div>
+        <div className="thread-head-actions">
+          <button
+            className={selectionMode ? "msg-select-btn active" : "msg-select-btn"}
+            onClick={() => {
+              setSelectionMode((v) => !v);
+              setSelectedIds(new Set());
+            }}
+            title="여러 메시지 선택"
+          >
+            {selectionMode ? `선택중 (${selectedIds.size})` : "선택"}
+          </button>
+          {selectionMode && selectedIds.size > 0 && (
+            <button
+              className="msg-fork-btn"
+              onClick={() => setForkOpen(true)}
+              title="선택한 메시지를 새 스레드로 포크"
+            >
+              ↳ 포크
+            </button>
+          )}
+        </div>
       </div>
       {parentMessage && (
         <div className="thread-parent">
@@ -226,12 +267,28 @@ export function ThreadView({ thread, channel, workspaceRoot, parentMessage, onCa
         onPickOption={(_m, label) => void onSend(label)}
         onEditSave={onEditThreadMessage}
         onDelete={onDeleteThreadMessage}
+        selectionMode={selectionMode}
+        selectedIds={selectedIds}
+        onToggleSelect={toggleSelect}
       />
       {error && <div className="banner-error" onClick={() => setError(null)}>{error}</div>}
       <Composer
         onSend={onSend}
         agents={channel.agent_ids}
         placeholder="스레드 메시지 — Enter 전송 (mention 없으면 마지막 에이전트가 받음)"
+        permMode={permMode}
+      />
+      <ForkDialog
+        open={forkOpen}
+        onClose={() => setForkOpen(false)}
+        messageIds={Array.from(selectedIds)}
+        channels={forkTargets ?? [channel]}
+        currentChannelId={channel.id}
+        onForked={(result, targetChannelId) => {
+          setSelectionMode(false);
+          setSelectedIds(new Set());
+          onForked?.(result, targetChannelId);
+        }}
       />
     </div>
   );

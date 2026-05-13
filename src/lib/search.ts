@@ -1,6 +1,47 @@
-// 검색 — 메시지·세션 trigram-ILIKE.
+// 검색 — 메시지·세션 trigram-ILIKE + 워크스페이스 파일명.
 import { supabase } from "./supabase";
+import { fsList } from "./fs";
 import type { Message, Session, Channel } from "../types";
+
+export type FileHit = { path: string; name: string };
+
+/** 워크스페이스 root 아래에서 파일명에 query가 포함된 파일을 찾음 (depth/limit cap). */
+export async function searchFiles(
+  workspaceRoot: string,
+  query: string,
+  opts: { limit?: number; maxDepth?: number } = {},
+): Promise<FileHit[]> {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const limit = opts.limit ?? 50;
+  const maxDepth = opts.maxDepth ?? 6;
+  const out: FileHit[] = [];
+
+  async function walk(rel: string, depth: number): Promise<void> {
+    if (out.length >= limit || depth > maxDepth) return;
+    let entries: { name: string; path: string; is_dir: boolean }[] = [];
+    try {
+      entries = await fsList(workspaceRoot, rel);
+    } catch {
+      return;
+    }
+    // 폴더 먼저 깊이 우선이지만, 일치 파일을 빨리 모으려고 파일을 먼저 처리.
+    const files = entries.filter((e) => !e.is_dir);
+    const dirs = entries.filter((e) => e.is_dir);
+    for (const f of files) {
+      if (out.length >= limit) return;
+      if (f.name.toLowerCase().includes(q)) {
+        out.push({ path: f.path, name: f.name });
+      }
+    }
+    for (const d of dirs) {
+      if (out.length >= limit) return;
+      await walk(d.path, depth + 1);
+    }
+  }
+  await walk("", 0);
+  return out;
+}
 
 export type MessageHit = Message & {
   session_name?: string;

@@ -91,7 +91,7 @@ export function Editor({ root, path, line, col, onClose }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [save, path, dirty]);
 
-  const extensions: ReturnType<typeof javascript>[] = [];
+  const extensions: ReturnType<typeof javascript>[] = [EditorView.lineWrapping];
   switch (lang) {
     case "javascript":
       extensions.push(javascript({ jsx: true, typescript: true }));

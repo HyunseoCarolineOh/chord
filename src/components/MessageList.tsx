@@ -17,6 +17,12 @@ type Props = {
   onOpenThread?: (summary: ThreadSummary, parent: Message) => void;
   onEditSave?: (m: Message, newContent: string) => void | Promise<void>;
   onDelete?: (m: Message) => void | Promise<void>;
+  /** 선택 모드 on/off — true면 각 메시지에 체크박스 표시 */
+  selectionMode?: boolean;
+  /** 현재 선택된 메시지 id 집합 */
+  selectedIds?: Set<string>;
+  /** 체크박스 toggle 콜백 */
+  onToggleSelect?: (m: Message) => void;
 };
 
 export function MessageList({
@@ -30,10 +36,13 @@ export function MessageList({
   onOpenThread,
   onEditSave,
   onDelete,
+  selectionMode,
+  selectedIds,
+  onToggleSelect,
 }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [messages.length]);
 
   if (messages.length === 0) {
@@ -60,6 +69,9 @@ export function MessageList({
             onOpenThread={summary && onOpenThread ? () => onOpenThread(summary, m) : undefined}
             onEditSave={onEditSave}
             onDelete={onDelete}
+            selectionMode={selectionMode}
+            selected={selectedIds?.has(m.id) ?? false}
+            onToggleSelect={onToggleSelect}
           />
         );
       })}
@@ -78,6 +90,9 @@ function MessageItem({
   onOpenThread,
   onEditSave,
   onDelete,
+  selectionMode,
+  selected,
+  onToggleSelect,
 }: {
   m: Message;
   onStartThread?: (m: Message) => void;
@@ -88,6 +103,9 @@ function MessageItem({
   onOpenThread?: () => void;
   onEditSave?: (m: Message, newContent: string) => void | Promise<void>;
   onDelete?: (m: Message) => void | Promise<void>;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (m: Message) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.content);
@@ -141,7 +159,20 @@ function MessageItem({
   }
 
   return (
-    <div className={`msg msg-${m.role}${isDeleted ? " msg-deleted" : ""}`}>
+    <div
+      className={`msg msg-${m.role}${isDeleted ? " msg-deleted" : ""}${selectionMode ? " msg-selectable" : ""}${selected ? " msg-selected" : ""}`}
+      onClick={selectionMode && !editing ? () => onToggleSelect?.(m) : undefined}
+    >
+      {selectionMode && (
+        <input
+          type="checkbox"
+          className="msg-select-checkbox"
+          checked={!!selected}
+          onChange={() => onToggleSelect?.(m)}
+          onClick={(e) => e.stopPropagation()}
+          aria-label="이 메시지 선택"
+        />
+      )}
       <AgentAvatar name={avatarName} size={36} />
       <div className="msg-content">
         <div className="msg-meta">
