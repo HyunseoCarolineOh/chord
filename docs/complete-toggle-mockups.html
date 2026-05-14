@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>chord 완료처리 UX 5안 비교</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-soft: #131820;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #00ff41;
+    --text-dim: #4ade80;
+    --text-mute: #8b949e;
+    --accent: #00d4ff;
+    --accent-2: #c792ea;
+    --user: #c9d1d9;
+    --danger: #f85149;
+    --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); }
+  body {
+    margin: 0;
+    padding: 24px;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  h1 {
+    color: var(--text);
+    font-size: 1.35rem;
+    margin: 0 0 4px;
+    text-shadow: 0 0 8px rgba(0, 255, 65, 0.25);
+  }
+  .subtitle {
+    color: var(--text-mute);
+    margin-bottom: 24px;
+    font-size: 0.88rem;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .reset-btn {
+    padding: 3px 10px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-mute);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.78rem;
+  }
+  .reset-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 16px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+  }
+  .card-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  .card-num { color: var(--accent); font-weight: bold; font-size: 0.82rem; }
+  .card-name { color: var(--text); font-weight: bold; font-size: 0.95rem; }
+  .card-desc { color: var(--text-mute); font-size: 0.82rem; margin-bottom: 12px; min-height: 2.6em; }
+
+  /* chord 메시지 스타일 (간략) */
+  .msg-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px;
+  }
+  .msg {
+    position: relative;
+    padding: 6px 10px;
+    border-radius: 4px;
+    color: var(--user);
+    transition: background 0.12s, opacity 0.2s;
+  }
+  .msg:hover { background: rgba(255, 255, 255, 0.03); }
+  .msg-user { color: var(--user); }
+  .msg-agent { color: var(--text-dim); }
+  .msg-system { color: var(--text-mute); font-style: italic; }
+
+  .msg-meta {
+    color: var(--text-mute);
+    font-size: 0.76rem;
+    margin-right: 8px;
+    user-select: none;
+  }
+  .msg-meta .at { color: var(--accent-2); }
+  .msg-body { display: inline; }
+  .msg-completed .msg-body {
+    text-decoration: line-through;
+    opacity: 0.45;
+  }
+
+  /* === 안 01: Hover ✓ chip === */
+  .v1 .msg { padding-right: 32px; }
+  .v1 .msg .v1-chip {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-soft);
+    color: var(--text-mute);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 0.85rem;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+    font-family: inherit;
+  }
+  .v1 .msg:hover .v1-chip { opacity: 1; }
+  .v1 .msg.msg-completed .v1-chip {
+    opacity: 1;
+    color: var(--text);
+    border-color: var(--text);
+    box-shadow: 0 0 6px rgba(0, 255, 65, 0.45);
+  }
+
+  /* === 안 02: Status dot === */
+  .v2 .msg { padding-left: 26px; }
+  .v2 .msg .v2-dot {
+    position: absolute;
+    left: 8px;
+    top: 11px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1px solid var(--text-mute);
+    background: transparent;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  }
+  .v2 .msg:hover .v2-dot { border-color: var(--text-dim); }
+  .v2 .msg.msg-completed .v2-dot {
+    background: var(--text);
+    border-color: var(--text);
+    box-shadow: 0 0 8px rgba(0, 255, 65, 0.6);
+  }
+
+  /* === 안 03: Strike on left-margin click === */
+  .v3 .msg { padding-left: 26px; }
+  .v3 .msg .v3-strip {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 18px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    border-left: 2px solid transparent;
+  }
+  .v3 .msg:hover .v3-strip { background: rgba(0, 212, 255, 0.08); }
+  .v3 .msg.msg-completed .v3-strip {
+    background: linear-gradient(180deg, rgba(0, 255, 65, 0.22), transparent);
+    border-left: 2px solid var(--text);
+  }
+
+  /* === 안 04: Emoji reaction ✅ === */
+  .v4 .v4-row { margin-top: 4px; }
+  .v4 .reaction {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 8px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 0.78rem;
+    color: var(--text-mute);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
+    user-select: none;
+    font-family: inherit;
+  }
+  .v4 .reaction:hover { border-color: var(--accent); }
+  .v4 .reaction.active {
+    border-color: var(--text);
+    color: var(--text);
+    background: rgba(0, 255, 65, 0.08);
+    box-shadow: 0 0 6px rgba(0, 255, 65, 0.35);
+  }
+
+  /* === 안 05: Inline _mark done_ === */
+  .v5 .msg .v5-tag {
+    display: inline;
+    margin-left: 8px;
+    color: var(--text-mute);
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: color 0.15s, text-shadow 0.15s;
+    user-select: none;
+  }
+  .v5 .msg .v5-tag::before { content: "_"; }
+  .v5 .msg .v5-tag::after  { content: "_"; }
+  .v5 .msg:hover .v5-tag { color: var(--accent); }
+  .v5 .msg.msg-completed .v5-tag {
+    color: var(--text);
+    text-shadow: 0 0 6px rgba(0, 255, 65, 0.45);
+  }
+
+  /* 비교 표 */
+  .compare {
+    margin-top: 32px;
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .compare h2 {
+    color: var(--text);
+    font-size: 1rem;
+    margin: 0 0 12px;
+    text-shadow: 0 0 6px rgba(0, 255, 65, 0.2);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td {
+    text-align: left;
+    padding: 7px 8px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { color: var(--accent); font-weight: normal; }
+  td.dim { color: var(--text-mute); }
+  td.pro { color: var(--text-dim); }
+  td.con { color: var(--danger); opacity: 0.85; }
+  td.label { color: var(--text); font-weight: bold; }
+
+  .pick-note {
+    margin-top: 16px;
+    padding: 10px 12px;
+    border: 1px dashed var(--accent);
+    border-radius: 4px;
+    color: var(--text-mute);
+    font-size: 0.85rem;
+    line-height: 1.8;
+  }
+  .pick-note .key { color: var(--accent); margin-right: 6px; }
+  .pick-note .pick { color: var(--text); }
+
+  footer {
+    color: var(--text-mute);
+    font-size: 0.76rem;
+    margin-top: 24px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <h1>chord 완료처리 UX — 5안 비교</h1>
+  <p class="subtitle">
+    각 카드의 메시지를 직접 클릭해 보세요. 상태는 새로고침해도 유지됩니다.
+    <button class="reset-btn" onclick="resetAll()">↺ 전체 리셋</button>
+  </p>
+
+  <div class="grid">
+
+    <div class="card v1">
+      <div class="card-header">
+        <span class="card-num">[01]</span>
+        <span class="card-name">Hover ✓ chip</span>
+      </div>
+      <div class="card-desc">메시지 hover 시 우측에 작은 ✓ 버튼이 나타남. 평소엔 안 보임 → 노이즈 0.</div>
+      <div class="msg-list" data-variant="v1"></div>
+    </div>
+
+    <div class="card v2">
+      <div class="card-header">
+        <span class="card-num">[02]</span>
+        <span class="card-name">Status dot</span>
+      </div>
+      <div class="card-desc">메시지 왼쪽에 작은 dot — 비어있다가 클릭하면 형광 그린 글로우로 채워짐. 항상 보임.</div>
+      <div class="msg-list" data-variant="v2"></div>
+    </div>
+
+    <div class="card v3">
+      <div class="card-header">
+        <span class="card-num">[03]</span>
+        <span class="card-name">좌측 마진 클릭 → strike</span>
+      </div>
+      <div class="card-desc">메시지 왼쪽 18px 마진이 클릭 영역. hover 시 시안 라이트 → 클릭 시 그린 사이드 바 + 본문 취소선.</div>
+      <div class="msg-list" data-variant="v3"></div>
+    </div>
+
+    <div class="card v4">
+      <div class="card-header">
+        <span class="card-num">[04]</span>
+        <span class="card-name">Reaction ✅</span>
+      </div>
+      <div class="card-desc">Slack 스타일. 메시지 아래 ✅ 반응이 칩으로 토글. 추가 = 완료. 다른 사람 reactions와 통일된 UI.</div>
+      <div class="msg-list" data-variant="v4"></div>
+    </div>
+
+    <div class="card v5">
+      <div class="card-header">
+        <span class="card-num">[05]</span>
+        <span class="card-name">Inline _mark done_</span>
+      </div>
+      <div class="card-desc">메시지 뒤에 markdown italic 토큰 _mark done_. 클릭하면 _✓ done_ 으로 변함. 터미널 미감과 가장 잘 맞음.</div>
+      <div class="msg-list" data-variant="v5"></div>
+    </div>
+
+  </div>
+
+  <div class="compare">
+    <h2>5안 trade-offs</h2>
+    <table>
+      <tr>
+        <th>안</th>
+        <th>발견성</th>
+        <th>클릭 비용</th>
+        <th>시각 노이즈</th>
+        <th>구현 난이도</th>
+        <th>chord 미감</th>
+      </tr>
+      <tr>
+        <td class="label">[01] Hover ✓</td>
+        <td class="dim">중 (호버 시만)</td>
+        <td class="pro">1클릭</td>
+        <td class="pro">0 (평소 안 보임)</td>
+        <td class="pro">매우 낮음 (CSS only)</td>
+        <td class="dim">중</td>
+      </tr>
+      <tr>
+        <td class="label">[02] Status dot</td>
+        <td class="pro">높음 (상시 표시)</td>
+        <td class="pro">1클릭</td>
+        <td class="dim">낮~중 (dot 상시)</td>
+        <td class="pro">매우 낮음</td>
+        <td class="pro">높음 (terminal cursor)</td>
+      </tr>
+      <tr>
+        <td class="label">[03] 좌측 마진</td>
+        <td class="con">낮음 (영역 모호)</td>
+        <td class="pro">1클릭</td>
+        <td class="pro">0</td>
+        <td class="pro">낮음</td>
+        <td class="dim">중</td>
+      </tr>
+      <tr>
+        <td class="label">[04] Reaction ✅</td>
+        <td class="dim">중</td>
+        <td class="con">2클릭 (열고 ✅)</td>
+        <td class="dim">중 (chip 상시)</td>
+        <td class="con">중~높음 (스키마 확장 필요)</td>
+        <td class="con">낮음 (이모지 톤 충돌)</td>
+      </tr>
+      <tr>
+        <td class="label">[05] Inline _done_</td>
+        <td class="pro">중~높음</td>
+        <td class="pro">1클릭</td>
+        <td class="dim">낮~중 (텍스트 토큰)</td>
+        <td class="pro">낮음</td>
+        <td class="pro">매우 높음 (markdown 톤)</td>
+      </tr>
+    </table>
+
+    <div class="pick-note">
+      <span class="key">기본 추천</span><span class="pick">[02] Status dot</span> — 발견성/노이즈/미감 균형.<br>
+      <span class="key">미감 우선</span><span class="pick">[05] Inline _done_</span> — markdown 터미널 톤과 가장 자연스럽게 어울림.<br>
+      <span class="key">노이즈 최소</span><span class="pick">[01] Hover ✓</span> — 메시지 흐름을 절대 방해하지 않음.
+    </div>
+  </div>
+
+  <footer>chord · 완료처리 UX 비교 mock · 2026-05-14</footer>
+
+<script>
+  const MESSAGES = [
+    { role: "user",   name: "you",           time: "12:25", body: "월요일부터 오늘까지 한 작업 보고해줘" },
+    { role: "agent",  name: "sales-manager", time: "12:25", body: "FunnyLabs closed-won + CPS / Korea Deep 팔로업이 핵심." },
+    { role: "agent",  name: "dgr",           time: "12:28", body: "월~오늘 새 리드 발굴 정체. Healthcare batch 속도 점검 필요." },
+    { role: "user",   name: "you",           time: "12:30", body: "Healthcare batch 진행상황 알려줘." },
+  ];
+
+  function metaHtml(m) {
+    const who = m.role === "agent"
+      ? `<span class="at">@${m.name}</span>`
+      : m.name;
+    return `<span class="msg-meta">${m.time} ${who}</span>`;
+  }
+
+  function loadState(variant) {
+    try { return JSON.parse(localStorage.getItem("chord-mock-" + variant) || "{}"); }
+    catch { return {}; }
+  }
+  function saveState(variant, state) {
+    localStorage.setItem("chord-mock-" + variant, JSON.stringify(state));
+  }
+  function resetAll() {
+    ["v1","v2","v3","v4","v5"].forEach(v => localStorage.removeItem("chord-mock-" + v));
+    document.querySelectorAll(".msg-list").forEach(renderList);
+  }
+
+  function renderList(container) {
+    const variant = container.dataset.variant;
+    const state = loadState(variant);
+    container.innerHTML = "";
+
+    MESSAGES.forEach((m, i) => {
+      const isCompleted = !!state[i];
+      const div = document.createElement("div");
+      div.className = `msg msg-${m.role}` + (isCompleted ? " msg-completed" : "");
+
+      if (variant === "v1") {
+        div.innerHTML = metaHtml(m)
+          + `<span class="msg-body">${m.body}</span>`
+          + `<button class="v1-chip" title="완료 토글">✓</button>`;
+        div.querySelector(".v1-chip").onclick = (e) => { e.stopPropagation(); toggle(variant, i); };
+
+      } else if (variant === "v2") {
+        div.innerHTML = `<span class="v2-dot" title="완료 토글"></span>`
+          + metaHtml(m)
+          + `<span class="msg-body">${m.body}</span>`;
+        div.querySelector(".v2-dot").onclick = (e) => { e.stopPropagation(); toggle(variant, i); };
+
+      } else if (variant === "v3") {
+        div.innerHTML = `<span class="v3-strip" title="좌측을 클릭하면 완료"></span>`
+          + metaHtml(m)
+          + `<span class="msg-body">${m.body}</span>`;
+        div.querySelector(".v3-strip").onclick = (e) => { e.stopPropagation(); toggle(variant, i); };
+
+      } else if (variant === "v4") {
+        const count = isCompleted ? " 1" : "";
+        const activeCls = isCompleted ? " active" : "";
+        div.innerHTML = metaHtml(m)
+          + `<span class="msg-body">${m.body}</span>`
+          + `<div class="v4-row"><span class="reaction checkmark${activeCls}" title="✅ 토글">✅${count}</span></div>`;
+        div.querySelector(".reaction").onclick = (e) => { e.stopPropagation(); toggle(variant, i); };
+
+      } else if (variant === "v5") {
+        const tag = isCompleted ? "✓ done" : "mark done";
+        div.innerHTML = metaHtml(m)
+          + `<span class="msg-body">${m.body}</span>`
+          + `<span class="v5-tag" title="완료 토글">${tag}</span>`;
+        div.querySelector(".v5-tag").onclick = (e) => { e.stopPropagation(); toggle(variant, i); };
+      }
+
+      container.appendChild(div);
+    });
+  }
+
+  function toggle(variant, idx) {
+    const state = loadState(variant);
+    state[idx] = !state[idx];
+    saveState(variant, state);
+    renderList(document.querySelector(`.msg-list[data-variant="${variant}"]`));
+  }
+
+  document.querySelectorAll(".msg-list").forEach(renderList);
+</script>
+</body>
+</html>

@@ -197,26 +197,40 @@ export async function buildDebatePrompt(args: {
   );
 }
 
-/** /debate <주제> 처리 — thread + chord_debates row 생성 + 시작 안내 user 메시지. */
+/**
+ * /debate <주제> 처리 — chord_debates row 생성 + 시작 안내 system 메시지.
+ *
+ * existingThread가 주어지면 그 thread 안에서 바로 시작 (채널 본문 user 메시지·새 thread 생성 생략).
+ * 없으면 채널 본문에 user 메시지 INSERT + 새 thread 생성하는 기존 흐름.
+ */
 export async function startDebate(args: {
   topic: string;
   channel: Channel;
   session: Session;
   participants: string[]; // 검증 끝난 참여자 키 (>=2)
-}): Promise<{ thread: Thread; debate: DebateRow; firstSpeaker: string; startMessageId: string }> {
-  const { topic, channel, session, participants } = args;
+  existingThread?: Thread;
+}): Promise<{ thread: Thread; debate: DebateRow; firstSpeaker: string; startMessageId: string | null }> {
+  const { topic, channel, session, participants, existingThread } = args;
   const firstSpeaker = participants[0];
 
-  // 1) 채널 본문에 user 시작 메시지
-  const startMsg = await insertMessage({
-    sessionId: session.id,
-    role: "user",
-    content: `/debate ${topic}`,
-  });
+  let thread: Thread;
+  let startMessageId: string | null = null;
 
-  // 2) thread 생성 (parent = startMsg)
-  const title = topic.length > 40 ? topic.slice(0, 40) + "…" : topic;
-  const thread = await createThread(session.id, startMsg.id, title);
+  if (existingThread) {
+    thread = existingThread;
+  } else {
+    // 1) 채널 본문에 user 시작 메시지
+    const startMsg = await insertMessage({
+      sessionId: session.id,
+      role: "user",
+      content: `/debate ${topic}`,
+    });
+    startMessageId = startMsg.id;
+
+    // 2) thread 생성 (parent = startMsg)
+    const title = topic.length > 40 ? topic.slice(0, 40) + "…" : topic;
+    thread = await createThread(session.id, startMsg.id, title);
+  }
 
   // 3) 시작 안내를 thread 안 system 메시지로
   await supabase.from("chord_messages").insert({
@@ -237,5 +251,5 @@ export async function startDebate(args: {
     firstSpeaker,
   });
 
-  return { thread, debate, firstSpeaker, startMessageId: startMsg.id };
+  return { thread, debate, firstSpeaker, startMessageId };
 }

@@ -181,6 +181,7 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .hint { color: var(--text-mute); font-size: 0.85rem; }
 
 .msg {
+  position: relative;
   display: flex;
   flex-direction: row;
   gap: 10px;
@@ -818,11 +819,46 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 }
 
 /* deleted placeholder */
-.msg.msg-deleted .msg-body { opacity: 0.7; }
+/* 삭제된 메시지 — 완료 메시지와 동일한 Strong dim */
+.msg.msg-deleted { opacity: 0.18; }
+.msg.msg-deleted:hover { opacity: 0.7; }
 .msg-deleted-placeholder {
   color: var(--text-mute);
   font-style: italic;
 }
+
+/* 완료 표시 토글 — msg-actions 안 inline 버튼. 편집/삭제와 같은 컨테이너. */
+.msg-complete-toggle {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-mute);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: 3px;
+  transition: color 0.12s, border-color 0.12s, background 0.12s, box-shadow 0.12s;
+}
+.msg .msg-complete-toggle:hover {
+  color: var(--text);
+  border-color: var(--text);
+  background: rgba(0, 255, 65, 0.06);
+}
+.msg .msg-complete-toggle.checked {
+  color: var(--text);
+  border-color: var(--text);
+  box-shadow: 0 0 6px rgba(0, 255, 65, 0.45);
+}
+/* checked chip은 hover 안 해도 항상 보임 — 완료 상태 인디케이터 */
+.msg .msg-actions:has(.msg-complete-toggle.checked) { opacity: 1; }
+
+/* 완료된 메시지 — Strong dim: opacity 0.18, hover 시 0.7로 살아남 */
+.msg.msg-completed { opacity: 0.18; }
+.msg.msg-completed:hover { opacity: 0.7; }
+.msg.msg-completed .msg-body { text-decoration: line-through; }
+.msg.msg-completed .msg-author { text-decoration: line-through; }
 
 /* inline edit textarea */
 .msg-edit {
@@ -951,8 +987,13 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   color: var(--text-dim);
   font-family: inherit; font-size: 0.74rem;
   padding: 2px 8px; border-radius: 3px;
+  cursor: pointer;
 }
 .editor-actions button:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
+.editor-actions .md-mode-toggle {
+  color: var(--text);
+  letter-spacing: 0.03em;
+}
 .saved-hint { color: var(--text-mute); font-size: 0.7rem; }
 .editor-error {
   color: var(--danger); padding: 6px 10px; font-size: 0.78rem;
@@ -963,9 +1004,217 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   display: flex; align-items: center; justify-content: center;
   color: var(--text-mute); font-size: 0.85rem;
 }
-.editor-cm { flex: 1; min-height: 0; }
+.editor-cm { flex: 1; min-height: 0; position: relative; }
 .editor-cm .cm-editor { height: 100%; font-family: var(--font-mono); }
 .editor-cm .cm-scroller { font-family: var(--font-mono); }
+
+/* Markdown 라이브 위지위그 (Milkdown crepe) */
+.editor-md {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+.editor-md .markdown-editor-root {
+  height: 100%;
+}
+.editor-md .milkdown {
+  height: 100%;
+  background: transparent;
+  color: var(--text);
+}
+.editor-md .ProseMirror {
+  min-height: 100%;
+  padding: 24px 32px;
+  outline: none;
+  font-family: var(--font-sans, inherit);
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+.editor-md .ProseMirror:focus { outline: none; }
+
+/* RightPanel comments 섹션 — 활성 file 탭의 댓글 표시 */
+.right-section.comments-section {
+  max-height: 50vh;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+}
+.right-section.comments-section .section-label .hint-mini {
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+.right-section.comments-section .rp-expand {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-mute);
+  font-family: inherit;
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.right-section.comments-section .rp-expand:hover { color: var(--accent); border-color: var(--accent); }
+
+/* 텍스트 선택 시 떠오르는 "+ 댓글" 버튼 */
+.comment-floating-btn {
+  position: absolute;
+  transform: translateY(-100%);
+  z-index: 10;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+}
+.comment-floating-btn:hover { filter: brightness(1.1); }
+
+/* 댓글 count chip (헤더 옆) */
+.editor-comment-count {
+  margin-left: 10px;
+  color: var(--text);
+  font-size: 0.72rem;
+  font-family: inherit;
+}
+.editor-comment-resolved-count { color: var(--text-mute); }
+
+/* 우측 댓글 패널 */
+.editor-comments-pane {
+  width: 280px;
+  flex: 0 0 280px;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.editor-comments-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.74rem;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+}
+.editor-comments-title { text-transform: uppercase; }
+.editor-comments-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-mute);
+  font-family: inherit;
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.editor-comments-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.editor-comments-empty {
+  padding: 14px 10px;
+  color: var(--text-mute);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+/* 댓글 카드 */
+.editor-comment {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+  transition: background 0.12s;
+}
+.editor-comment.hovered { background: var(--bg); }
+.editor-comment.resolved { opacity: 0.55; }
+.editor-comment.orphaned { border-left: 3px solid var(--danger); }
+.editor-comment-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.7rem;
+  color: var(--text-mute);
+  margin-bottom: 4px;
+}
+.editor-comment-author { color: var(--text-dim); font-weight: 600; }
+.editor-comment-orphan-tag,
+.editor-comment-weak-tag {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  color: var(--text-mute);
+}
+.editor-comment-orphan-tag { color: var(--danger); border-color: var(--danger); }
+.editor-comment-quote {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-left: 2px solid var(--accent);
+  padding: 2px 8px;
+  margin: 4px 0;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-align: left;
+  cursor: pointer;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.editor-comment-quote:hover { color: var(--text); }
+.editor-comment-quote:disabled { cursor: default; opacity: 0.5; }
+.editor-comment-body {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 6px 0;
+}
+.editor-comment-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.editor-comment-actions button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.editor-comment-actions button:hover { color: var(--accent); border-color: var(--accent); }
+.editor-comment-actions .editor-comment-del:hover { color: var(--danger); border-color: var(--danger); }
+
+/* 작성 중 댓글 */
+.editor-comment-composing {
+  border-left: 3px solid var(--accent);
+  background: var(--bg);
+}
+.editor-comment-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.8rem;
+  padding: 6px 8px;
+  border-radius: 3px;
+  resize: vertical;
+  margin: 4px 0;
+}
+.editor-comment-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 
 /* ===== Side panel (채팅창 안 · 탭 + resizer) ===== */
 .panel-resizer {
@@ -1299,14 +1548,20 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   gap: 12px;
 }
 
-/* ===== Markdown code copy button ===== */
+/* ===== Markdown code copy / open buttons ===== */
 .md .code-wrap {
   position: relative;
 }
-.md .code-copy {
+.md .code-actions {
   position: absolute;
   top: 6px;
   right: 6px;
+  display: flex;
+  gap: 4px;
+  z-index: 2;
+}
+.md .code-copy,
+.md .code-open {
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text-mute);
@@ -1318,10 +1573,11 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   transition: opacity 0.15s, color 0.15s, border-color 0.15s;
   cursor: pointer;
   letter-spacing: 0.05em;
-  z-index: 2;
 }
-.md .code-wrap:hover .code-copy { opacity: 1; }
-.md .code-copy:hover {
+.md .code-wrap:hover .code-copy,
+.md .code-wrap:hover .code-open { opacity: 1; }
+.md .code-copy:hover,
+.md .code-open:hover {
   color: var(--accent);
   border-color: var(--accent);
 }
@@ -1625,6 +1881,15 @@ body.chord-ctrl .msg-body .linkable {
 }
 .channel-item.has-unread { color: var(--text); font-weight: 500; }
 .channel-pin-item.has-unread .pin-name { color: var(--text); font-weight: 500; }
+.panel-tab.has-unread .panel-tab-title { color: var(--text); font-weight: 600; }
+.panel-tab.has-unread { box-shadow: inset 2px 0 0 #ff4757; }
+.reply-chip.has-unread {
+  border-color: #ff4757;
+  color: var(--text);
+  font-weight: 600;
+  background: rgba(255, 71, 87, 0.08);
+}
+.reply-chip.has-unread:hover { background: rgba(255, 71, 87, 0.14); }
 
 /* ===== 메시지 선택 / 포크 ===== */
 .msg-select-btn,
@@ -1713,3 +1978,26 @@ body.chord-ctrl .msg-body .linkable {
 .fork-confirm:hover:not(:disabled) { filter: brightness(1.1); }
 .fork-confirm:disabled,
 .fork-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---- 클립보드 paste 이미지 ---- */
+.composer-paste-status {
+  position: absolute;
+  bottom: -22px;
+  left: 12px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+.md-img {
+  max-width: min(480px, 100%);
+  max-height: 360px;
+  border-radius: 6px;
+  display: block;
+  margin: 6px 0;
+  cursor: zoom-in;
+  background: rgba(0, 0, 0, 0.2);
+}
+.md-img:hover { filter: brightness(1.05); }

@@ -4,6 +4,7 @@ export type PanelTabMeta = {
   id: string;
   kind: "thread" | "file";
   title: string;
+  unread?: boolean;
 };
 
 type Props = {
@@ -41,7 +42,7 @@ export function SidePanel({
             return (
               <div
                 key={t.id}
-                className={`panel-tab ${active ? "active" : ""}`}
+                className={`panel-tab ${active ? "active" : ""}${t.unread ? " has-unread" : ""}`}
                 onClick={() => onActivate(t.id)}
                 onMouseDown={(e) => {
                   // middle-click 으로 탭 닫기
@@ -52,10 +53,11 @@ export function SidePanel({
                 }}
                 role="tab"
                 aria-selected={active}
-                title={t.title}
+                title={t.unread ? `${t.title} — 새 메시지` : t.title}
               >
                 <span className="panel-tab-icon">{t.kind === "thread" ? "↳" : "📝"}</span>
                 <span className="panel-tab-title">{t.title}</span>
+                {t.unread && <span className="unread-dot" aria-label="새 메시지" />}
                 <button
                   className="panel-tab-close"
                   onClick={(e) => {

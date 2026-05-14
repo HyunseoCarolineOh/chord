@@ -3,8 +3,8 @@ import { Sidebar } from "./components/Sidebar";
 import { MessageList } from "./components/MessageList";
 import { Composer } from "./components/Composer";
 import { Modal } from "./components/Modal";
-import { ForkDialog } from "./components/ForkDialog";
-import { Editor } from "./components/Editor";
+import { Editor, type EditorPendingSelection } from "./components/Editor";
+import type { EditorView } from "@uiw/react-codemirror";
 import { SidePanel } from "./components/SidePanel";
 import { GitPanel } from "./components/GitPanel";
 import { RightPanel } from "./components/RightPanel";
@@ -20,6 +20,7 @@ import {
   updateMessage,
   softDeleteMessage,
   editMessageContent,
+  setMessageCompleted,
 } from "./lib/messages";
 import { route } from "./lib/router";
 import {
@@ -42,6 +43,7 @@ import {
   CONCLUSION_MARKER,
 } from "./lib/debate";
 import { supabase } from "./lib/supabase";
+import { notify } from "./lib/notify";
 import { runQuery } from "./lib/sidecar";
 import { loadAgent, resolveAgentPath, DATE_TOOL_GUIDANCE } from "./lib/agentLoader";
 import { fsHomeDir } from "./lib/fs";
@@ -68,25 +70,19 @@ function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // ===== 댓글 (RightPanel과 Editor가 공유) =====
+  const [pendingComment, setPendingComment] = useState<EditorPendingSelection | null>(null);
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
+  const [editorViewFilePath, setEditorViewFilePath] = useState<string | null>(null);
+  const onEditorViewReady = useCallback((v: EditorView | null, p: string | null) => {
+    setEditorView(v);
+    setEditorViewFilePath(p);
+  }, []);
+
   // 모달·패널 상태
   const [gitFullOpen, setGitFullOpen] = useState(false);
 
-  // ===== 메시지 선택 / 포크 =====
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
-  const [forkDialogOpen, setForkDialogOpen] = useState(false);
-  const toggleMessageSelect = useCallback((m: Message) => {
-    setSelectedMessageIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(m.id)) next.delete(m.id);
-      else next.add(m.id);
-      return next;
-    });
-  }, []);
-  const clearSelection = useCallback(() => {
-    setSelectedMessageIds(new Set());
-    setSelectionMode(false);
-  }, []);
+  // 포크 기능은 스레드 안에서만 — 메인 채팅창엔 선택/포크 UI 없음
   // Ctrl+/ 단축키 → RightPanel 검색 input focus 트리거 (값이 증가할 때마다 focus)
   const [searchFocusToken, setSearchFocusToken] = useState(0);
   const [showArchived, setShowArchived] = useState(false);
@@ -102,7 +98,7 @@ function App() {
   // 사이드 패널: 탭으로 스레드 / 파일을 동시에 열어둠 (브라우저 스타일)
   type PanelTab =
     | { id: string; kind: "thread"; thread: Thread; parent: Message | null; title: string; channelId: string }
-    | { id: string; kind: "file"; path: string | null; title: string; line?: number; col?: number };
+    | { id: string; kind: "file"; path: string | null; title: string; line?: number; col?: number; threadId?: string | null };
   const [panelTabs, setPanelTabs] = useState<PanelTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   // 앱 재시작 후 panelTabs 복원이 끝나기 전엔 localStorage 저장을 건너뜀
@@ -174,7 +170,7 @@ function App() {
     setUnreadThreads(new Set(Object.keys(s.threads)));
   }, []);
 
-  const openFileTab = useCallback((path: string | null, line?: number, col?: number) => {
+  const openFileTab = useCallback((path: string | null, line?: number, col?: number, threadId?: string | null) => {
     const id = path ? `file:${path}` : `file:blank:${Date.now()}`;
     const baseTitle = path ? (path.split(/[\\/]/).pop() ?? path) : "(empty)";
     const title = path && line ? `${baseTitle}:${line}` : baseTitle;
@@ -182,6 +178,7 @@ function App() {
       const existing = prev.find((t) => t.id === id);
       if (existing) {
         // 같은 파일 탭에 다른 line/col로 다시 열면 갱신 (Editor가 effect로 재점프)
+        // threadId는 새로 받은 값으로 덮어쓰지 않음 — 처음 만든 출처를 보존
         if (existing.kind === "file" && (existing.line !== line || existing.col !== col || existing.title !== title)) {
           return prev.map((t) =>
             t.id === id && t.kind === "file" ? { ...t, line, col, title } : t,
@@ -189,7 +186,7 @@ function App() {
         }
         return prev;
       }
-      return [...prev, { id, kind: "file", path, title, line, col }];
+      return [...prev, { id, kind: "file", path, title, line, col, threadId: threadId ?? null }];
     });
     setActiveTabId(id);
   }, []);
@@ -434,6 +431,16 @@ function App() {
     markChannelRead(selectedChannelId);
   }, [selectedChannelId, channels, loadSessionAndMessages, markChannelRead]);
 
+  // 활성 thread 탭이 바뀌면 unread 해제 (이미 열린 탭을 클릭해 다시 활성화하는 경우 포함)
+  useEffect(() => {
+    if (!activeTabId) return;
+    const tab = panelTabs.find((t) => t.id === activeTabId);
+    if (tab?.kind === "thread" && unreadThreads.has(tab.thread.id)) {
+      const s = clearUnreadThread(tab.thread.id);
+      setUnreadThreads(new Set(Object.keys(s.threads)));
+    }
+  }, [activeTabId, panelTabs, unreadThreads]);
+
   // 에이전트 호출 (agent.md 로드 + session_files 메타 + cwd + tools)
   const callAgent = useCallback(
     async (agentName: string, channel: Channel, workspaceRoot: string, sessionId: string, prompt: string) => {
@@ -576,6 +583,15 @@ function App() {
         .single();
       if (insErr || !ph) {
         console.error("placeholder insert failed", insErr);
+        // 사용자 안내 — placeholder 자체가 안 만들어졌으니 별도 system 메시지로
+        try {
+          await supabase.from("chord_messages").insert({
+            session_id: sessionId,
+            thread_id: threadId,
+            role: "system",
+            content: `@${agentName} 호출 실패 (placeholder INSERT 오류): ${insErr?.message ?? "unknown"}`,
+          });
+        } catch { /* swallow */ }
         return { fullText: "" };
       }
       const placeholder = ph as Message;
@@ -661,67 +677,94 @@ function App() {
       workspaceRoot: string,
       sessionId: string,
     ): Promise<void> => {
-      const debate = await getDebate(threadId);
-      if (!debate || debate.ended) return;
-      if (totalSpeeches(debate) >= MAX_TOTAL_SPEECHES) {
-        await endDebate(threadId, "max_total_speeches");
-        await supabase.from("chord_messages").insert({
-          session_id: sessionId,
-          thread_id: threadId,
-          role: "system",
-          content: `누적 발화 ${MAX_TOTAL_SPEECHES}회 도달 — 안전망으로 토론을 종료합니다.`,
+      try {
+        const debate = await getDebate(threadId);
+        if (!debate || debate.ended) return;
+        if (totalSpeeches(debate) >= MAX_TOTAL_SPEECHES) {
+          await endDebate(threadId, "max_total_speeches");
+          await supabase.from("chord_messages").insert({
+            session_id: sessionId,
+            thread_id: threadId,
+            role: "system",
+            content: `누적 발화 ${MAX_TOTAL_SPEECHES}회 도달 — 안전망으로 토론을 종료합니다.`,
+          });
+          void notify("chord · 토론 종료", `${debate.topic ?? "토론"} — 누적 발화 ${MAX_TOTAL_SPEECHES}회 한도 도달`);
+          return;
+        }
+
+        const others = participants.filter((p) => p !== speakerKey);
+        const prompt = await buildDebatePrompt({
+          threadId,
+          topic: debate.topic,
+          speakerKey,
+          available: others,
         });
-        return;
+
+        const { fullText } = await callAgentInThread(
+          speakerKey,
+          channel,
+          workspaceRoot,
+          sessionId,
+          threadId,
+          prompt,
+        );
+
+        await recordSpeech(threadId, speakerKey);
+
+        if (hasConclusionMarker(fullText, CONCLUSION_MARKER)) {
+          await endDebate(threadId, "concluded");
+          await supabase.from("chord_messages").insert({
+            session_id: sessionId,
+            thread_id: threadId,
+            role: "system",
+            content: `@${speakerKey}가 결론을 제시해 토론을 마칩니다.`,
+          });
+          void notify("chord · 토론 종료", `${debate.topic ?? "토론"} — @${speakerKey}가 결론 제시`);
+          return;
+        }
+
+        // 다시 fetch (UPDATE 사이 사용자가 /debate end 쳤을 수 있음)
+        const fresh = await getDebate(threadId);
+        if (!fresh || fresh.ended) return;
+        if (totalSpeeches(fresh) >= MAX_TOTAL_SPEECHES) {
+          await endDebate(threadId, "max_total_speeches");
+          await supabase.from("chord_messages").insert({
+            session_id: sessionId,
+            thread_id: threadId,
+            role: "system",
+            content: `누적 발화 ${MAX_TOTAL_SPEECHES}회 도달 — 안전망으로 토론을 종료합니다.`,
+          });
+          void notify("chord · 토론 종료", `${fresh.topic ?? "토론"} — 누적 발화 ${MAX_TOTAL_SPEECHES}회 한도 도달`);
+          return;
+        }
+
+        const nextKey = parseNextSpeaker(fullText, others);
+        console.log("[debate]", { speakerKey, nextKey, others, fullTextTail: fullText.slice(-200) });
+        if (!nextKey) {
+          // 다음 발화자 멘션 없음 → 사용자 명령 대기 (일시정지)
+          void notify("chord · 토론 일시정지", `${fresh.topic ?? "토론"} — 사용자 명령 대기 중 (스레드에 메시지로 재개)`);
+          return;
+        }
+        if (nextKey === speakerKey) {
+          console.log("[debate] self-mention ignored:", speakerKey);
+          return;
+        }
+        await dispatchDebateSpeaker(nextKey, threadId, participants, channel, workspaceRoot, sessionId);
+      } catch (e) {
+        // 예기치 못한 실패 — 토론을 종료하고 사용자에게 알림
+        console.error("[debate] dispatch failed", e);
+        const msg = e instanceof Error ? e.message : String(e);
+        try {
+          await endDebate(threadId, "config_error");
+          await supabase.from("chord_messages").insert({
+            session_id: sessionId,
+            thread_id: threadId,
+            role: "system",
+            content: `토론 중 오류로 자동 종료됩니다: ${msg}`,
+          });
+        } catch { /* swallow secondary failure */ }
+        void notify("chord · 토론 오류 종료", msg);
       }
-
-      const others = participants.filter((p) => p !== speakerKey);
-      const prompt = await buildDebatePrompt({
-        threadId,
-        topic: debate.topic,
-        speakerKey,
-        available: others,
-      });
-
-      const { fullText } = await callAgentInThread(
-        speakerKey,
-        channel,
-        workspaceRoot,
-        sessionId,
-        threadId,
-        prompt,
-      );
-
-      await recordSpeech(threadId, speakerKey);
-
-      if (hasConclusionMarker(fullText, CONCLUSION_MARKER)) {
-        await endDebate(threadId, "concluded");
-        await supabase.from("chord_messages").insert({
-          session_id: sessionId,
-          thread_id: threadId,
-          role: "system",
-          content: `@${speakerKey}가 결론을 제시해 토론을 마칩니다.`,
-        });
-        return;
-      }
-
-      // 다시 fetch (UPDATE 사이 사용자가 /debate end 쳤을 수 있음)
-      const fresh = await getDebate(threadId);
-      if (!fresh || fresh.ended) return;
-      if (totalSpeeches(fresh) >= MAX_TOTAL_SPEECHES) {
-        await endDebate(threadId, "max_total_speeches");
-        await supabase.from("chord_messages").insert({
-          session_id: sessionId,
-          thread_id: threadId,
-          role: "system",
-          content: `누적 발화 ${MAX_TOTAL_SPEECHES}회 도달 — 안전망으로 토론을 종료합니다.`,
-        });
-        return;
-      }
-
-      const nextKey = parseNextSpeaker(fullText, others);
-      if (!nextKey) return; // 일시정지
-      if (nextKey === speakerKey) return; // 자기 자신 멘션 무시
-      await dispatchDebateSpeaker(nextKey, threadId, participants, channel, workspaceRoot, sessionId);
     },
     [callAgentInThread],
   );
@@ -739,7 +782,13 @@ function App() {
       const r = route(text);
 
       if (r.kind === "slash") {
-        const result = await runSlash(channel, workspace, r.command, r.args, activeSession);
+        let result: Awaited<ReturnType<typeof runSlash>>;
+        try {
+          result = await runSlash(channel, workspace, r.command, r.args, activeSession);
+        } catch (e) {
+          setError(`슬래시 실행 중 오류: ${toMsg(e)}`);
+          return;
+        }
 
         if (!result.ok) {
           setError(result.message);
@@ -832,6 +881,16 @@ function App() {
           // 3. thread 자동 open — 사용자가 후속 대화 가능
           openThreadTab(thread, userMsg, channel.id);
         }
+      } else if (r.kind === "plain") {
+        // 응답할 leader가 없는 채널 — 사용자에게 안내
+        try {
+          const sysMsg = await insertMessage({
+            sessionId: activeSession.id,
+            role: "system",
+            content: `이 채널에 응답할 에이전트가 없습니다. /channel agents add <name> 으로 추가하거나, @<agent>로 명시 호출하세요.`,
+          });
+          setMessages((prev) => [...prev, sysMsg]);
+        } catch { /* swallow */ }
       }
     },
     [
@@ -909,7 +968,12 @@ function App() {
             const tabId = `thread-${row.thread_id}`;
             const isOpenAndActive =
               activeTabIdRef.current === tabId && panelTabsRef.current.some((t) => t.id === tabId);
-            if (!isOpenAndActive) markThreadUnread(row.thread_id);
+            if (!isOpenAndActive) {
+              markThreadUnread(row.thread_id);
+              // 채널 dot도 함께 — 어느 채널에 새 게 있는지 사이드바에서 알 수 있게.
+              // (현재 보는 채널이라도 thread는 본문이 아니므로 채널 dot 표시)
+              markChannelUnread(owningChannel.id);
+            }
           } else if (!isCurrentChannel) {
             markChannelUnread(owningChannel.id);
           }
@@ -1091,11 +1155,29 @@ function App() {
     );
   }, []);
 
+  // 메시지 완료 토글 — 채널 본문/스레드 공통 (스레드 메시지도 messages state에는 없지만 realtime UPDATE로 반영됨)
+  const onToggleCompleteMessage = useCallback(async (m: Message) => {
+    const willBeCompleted = !m.completed_at;
+    try {
+      await setMessageCompleted(m.id, willBeCompleted);
+    } catch (e) {
+      setError(toMsg(e));
+      return;
+    }
+    const nowIso = willBeCompleted ? new Date().toISOString() : null;
+    setMessages((prev) =>
+      prev.map((x) => (x.id === m.id ? { ...x, completed_at: nowIso } : x)),
+    );
+  }, []);
+
   const selectedChannel = channels.find((c) => c.id === selectedChannelId);
   const workspaceRoot = workspaces.find((w) => w.id === selectedWorkspaceId)?.root_path ?? null;
 
   const activeTab = panelTabs.find((t) => t.id === activeTabId) ?? null;
-  const tabMeta = panelTabs.map((t) => ({ id: t.id, kind: t.kind, title: t.title }));
+  const tabMeta = panelTabs.map((t) => {
+    const unread = t.kind === "thread" ? unreadThreads.has(t.thread.id) : false;
+    return { id: t.id, kind: t.kind, title: t.title, unread };
+  });
 
   return (
     <div className="app">
@@ -1150,25 +1232,6 @@ function App() {
               </div>
               {selectedChannel && (
                 <div className="ch-meta">
-                  <button
-                    className={selectionMode ? "msg-select-btn active" : "msg-select-btn"}
-                    onClick={() => {
-                      setSelectionMode((v) => !v);
-                      setSelectedMessageIds(new Set());
-                    }}
-                    title="여러 메시지 선택 모드"
-                  >
-                    {selectionMode ? `선택중 (${selectedMessageIds.size})` : "선택"}
-                  </button>
-                  {selectionMode && selectedMessageIds.size > 0 && (
-                    <button
-                      className="msg-fork-btn"
-                      onClick={() => setForkDialogOpen(true)}
-                      title="선택한 메시지를 새 스레드로 포크"
-                    >
-                      ↳ 포크
-                    </button>
-                  )}
                   <span>
                     cwd:{" "}
                     {selectedChannel.cwd && selectedChannel.cwd.length > 0
@@ -1210,19 +1273,18 @@ function App() {
                   ? "메시지가 없습니다. @coder 처럼 멘션, /session 으로 슬래시, ↳ thread 로 분기."
                   : "active session이 없습니다. /session start <name> 으로 시작."
               }
-              selectionMode={selectionMode}
-              selectedIds={selectedMessageIds}
-              onToggleSelect={toggleMessageSelect}
               onStartThread={onStartThread}
               workspaceRoot={workspaceRoot}
               onOpenFile={openFileTab}
               onEditSave={onEditChannelMessage}
               onDelete={onDeleteChannelMessage}
+              onToggleComplete={onToggleCompleteMessage}
               onPickOption={(m, label) => {
                 const author = m.agent_name ? `@${m.agent_name} ` : "";
                 void onSend(`${author}${label}`);
               }}
               threadByParent={threadByParent}
+              unreadThreadIds={unreadThreads}
               onOpenThread={(summary, parent) => {
                 if (!selectedChannelId) return;
                 const t: Thread = {
@@ -1256,25 +1318,28 @@ function App() {
             >
               {activeTab?.kind === "thread" && workspaceRoot && (() => {
                 const threadChannel = channels.find((c) => c.id === activeTab.channelId);
-                if (!threadChannel) return null;
+                const threadWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId);
+                if (!threadChannel || !threadWorkspace) return null;
+                const threadIdForFile = activeTab.thread.id;
                 return (
                   <ThreadView
                     key={activeTab.id}
                     thread={activeTab.thread}
                     channel={threadChannel}
+                    workspace={threadWorkspace}
                     workspaceRoot={workspaceRoot}
+                    activeSession={activeSession}
                     parentMessage={activeTab.parent}
                     onCallAgent={callAgentInThread}
+                    onDispatchDebateSpeaker={dispatchDebateSpeaker}
                     onClose={() => closeTab(activeTab.id)}
-                    onOpenFile={openFileTab}
+                    onOpenFile={(p, l, c) => openFileTab(p, l, c, threadIdForFile)}
                     permMode={permMode}
-                    forkTargets={channels.filter((c) => !c.archived)}
-                    onForked={(result, targetChannelId) => {
-                      if (targetChannelId !== selectedChannelId) {
-                        setSelectedChannelId(targetChannelId);
-                      }
-                      void reloadChannels();
-                      openThreadTab(result.thread, null, targetChannelId);
+                    forkTargets={threadSummaries.filter((t) => t.id !== activeTab.thread.id)}
+                    onForked={(result) => {
+                      // 같은 채널 안 기존 스레드로 append됐으므로 채널 변경 없음. 대상 스레드 탭 활성화.
+                      void reloadThreadSummaries();
+                      openThreadTab(result.thread, null, activeTab.channelId);
                     }}
                   />
                 );
@@ -1287,6 +1352,8 @@ function App() {
                   line={activeTab.line}
                   col={activeTab.col}
                   onClose={() => closeTab(activeTab.id)}
+                  onStartComment={setPendingComment}
+                  onViewReady={onEditorViewReady}
                 />
               )}
             </SidePanel>
@@ -1301,6 +1368,12 @@ function App() {
           channel={selectedChannel ?? null}
           onOpenGitFull={() => setGitFullOpen(true)}
           onOpenFile={(path) => openFileTab(path)}
+          activeFilePath={activeTab?.kind === "file" ? activeTab.path : null}
+          activeFileThreadId={activeTab?.kind === "file" ? (activeTab.threadId ?? null) : null}
+          pendingComment={pendingComment}
+          onClearPendingComment={() => setPendingComment(null)}
+          editorView={editorView}
+          editorViewFilePath={editorViewFilePath}
         />
       )}
 
@@ -1308,25 +1381,6 @@ function App() {
       <Modal open={gitFullOpen} title="⎇ git" onClose={() => setGitFullOpen(false)}>
         {workspaceRoot && <GitPanel root={workspaceRoot} full />}
       </Modal>
-
-      {/* 포크 다이얼로그 */}
-      <ForkDialog
-        open={forkDialogOpen}
-        onClose={() => setForkDialogOpen(false)}
-        messageIds={Array.from(selectedMessageIds)}
-        channels={channels.filter((c) => !c.archived)}
-        currentChannelId={selectedChannelId}
-        onForked={(result, targetChannelId) => {
-          clearSelection();
-          // 대상 채널로 이동하고 새 스레드 탭 자동 오픈
-          if (targetChannelId !== selectedChannelId) {
-            setSelectedChannelId(targetChannelId);
-          }
-          // 채널 갱신 (active_session_id가 새로 박혔을 수 있음)
-          void reloadChannels();
-          openThreadTab(result.thread, null, targetChannelId);
-        }}
-      />
 
     </div>
   );

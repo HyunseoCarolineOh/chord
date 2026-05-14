@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { AgentAvatar } from "./AgentAvatar";
 import { filterSlash, type SlashCommand } from "../lib/slashCatalog";
+import { uploadAttachment } from "../lib/attachments";
 
 export type PermissionMode = "default" | "plan" | "bypassPermissions";
 
@@ -87,6 +88,7 @@ export function Composer({ disabled, placeholder, agents = [], onSend, permMode 
   const [hover, setHover] = useState(false);
   const [trigger, setTrigger] = useState<Trigger | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
+  const [pasteStatus, setPasteStatus] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -185,6 +187,49 @@ export function Composer({ disabled, placeholder, agents = [], onSend, permMode 
 
   function onCaretMaybeMoved() {
     requestAnimationFrame(() => updateTriggerFromCaret(value));
+  }
+
+  function insertAtCaret(text: string) {
+    const ta = taRef.current;
+    if (!ta) {
+      setValue((v) => v + text);
+      return;
+    }
+    const start = ta.selectionStart ?? value.length;
+    const end = ta.selectionEnd ?? value.length;
+    const next = value.slice(0, start) + text + value.slice(end);
+    setValue(next);
+    setTimeout(() => {
+      ta.focus();
+      const pos = start + text.length;
+      ta.setSelectionRange(pos, pos);
+    }, 0);
+  }
+
+  async function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageItems = Array.from(items).filter((it) => it.kind === "file" && it.type.startsWith("image/"));
+    if (imageItems.length === 0) return;  // 텍스트 paste는 기본 동작에 맡김
+    e.preventDefault();
+    for (const it of imageItems) {
+      const file = it.getAsFile();
+      if (!file) continue;
+      const placeholder = `![uploading…](pending) `;
+      insertAtCaret(placeholder);
+      setPasteStatus(`이미지 업로드 중… (${(file.size / 1024).toFixed(0)}KB)`);
+      try {
+        const { url } = await uploadAttachment(file, file.type);
+        const md = `![image](${url}) `;
+        setValue((v) => v.replace(placeholder, md));
+        setPasteStatus(null);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setValue((v) => v.replace(placeholder, ""));
+        setPasteStatus(`업로드 실패: ${msg}`);
+        setTimeout(() => setPasteStatus(null), 4000);
+      }
+    }
   }
 
   function onDragOver(e: DragEvent<HTMLElement>) {
@@ -288,7 +333,7 @@ export function Composer({ disabled, placeholder, agents = [], onSend, permMode 
         ref={taRef}
         className="composer-input"
         value={value}
-        placeholder={placeholder ?? "메시지 — Enter 전송, Shift+Enter 줄바꿈, @ 멘션 · / 명령어 자동완성, 트리에서 파일/폴더 drop"}
+        placeholder={placeholder ?? "메시지 — Enter 전송, Shift+Enter 줄바꿈, @ 멘션 · / 명령어 자동완성, 이미지 Ctrl+V 붙여넣기"}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
         onKeyUp={onCaretMaybeMoved}
@@ -296,9 +341,11 @@ export function Composer({ disabled, placeholder, agents = [], onSend, permMode 
         onBlur={() => setTimeout(() => setTrigger(null), 120)}
         onDragOver={onDragOver}
         onDrop={onDrop}
+        onPaste={(e) => void onPaste(e)}
         disabled={disabled || busy}
         rows={1}
       />
+      {pasteStatus && <div className="composer-paste-status">{pasteStatus}</div>}
       <button
         className="composer-send"
         onClick={() => void send()}

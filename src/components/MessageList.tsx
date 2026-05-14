@@ -15,8 +15,12 @@ type Props = {
   onOpenFile?: (path: string, line?: number, col?: number) => void;
   threadByParent?: Map<string, ThreadSummary>;
   onOpenThread?: (summary: ThreadSummary, parent: Message) => void;
+  /** unread 강조용 thread id 집합 — reply-chip에 dot 표시 */
+  unreadThreadIds?: Set<string>;
   onEditSave?: (m: Message, newContent: string) => void | Promise<void>;
   onDelete?: (m: Message) => void | Promise<void>;
+  /** 완료 표시 토글 */
+  onToggleComplete?: (m: Message) => void | Promise<void>;
   /** 선택 모드 on/off — true면 각 메시지에 체크박스 표시 */
   selectionMode?: boolean;
   /** 현재 선택된 메시지 id 집합 */
@@ -36,9 +40,11 @@ export function MessageList({
   onOpenThread,
   onEditSave,
   onDelete,
+  onToggleComplete,
   selectionMode,
   selectedIds,
   onToggleSelect,
+  unreadThreadIds,
 }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -69,9 +75,11 @@ export function MessageList({
             onOpenThread={summary && onOpenThread ? () => onOpenThread(summary, m) : undefined}
             onEditSave={onEditSave}
             onDelete={onDelete}
+            onToggleComplete={onToggleComplete}
             selectionMode={selectionMode}
             selected={selectedIds?.has(m.id) ?? false}
             onToggleSelect={onToggleSelect}
+            threadUnread={summary ? (unreadThreadIds?.has(summary.id) ?? false) : false}
           />
         );
       })}
@@ -90,9 +98,11 @@ function MessageItem({
   onOpenThread,
   onEditSave,
   onDelete,
+  onToggleComplete,
   selectionMode,
   selected,
   onToggleSelect,
+  threadUnread,
 }: {
   m: Message;
   onStartThread?: (m: Message) => void;
@@ -103,14 +113,17 @@ function MessageItem({
   onOpenThread?: () => void;
   onEditSave?: (m: Message, newContent: string) => void | Promise<void>;
   onDelete?: (m: Message) => void | Promise<void>;
+  onToggleComplete?: (m: Message) => void | Promise<void>;
   selectionMode?: boolean;
   selected?: boolean;
   onToggleSelect?: (m: Message) => void;
+  threadUnread?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.content);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const isDeleted = !!m.deleted_at;
+  const isCompleted = !!m.completed_at;
 
   const author =
     m.role === "user" ? "user" : m.role === "agent" ? `@${m.agent_name ?? "agent"}` : "system";
@@ -160,7 +173,7 @@ function MessageItem({
 
   return (
     <div
-      className={`msg msg-${m.role}${isDeleted ? " msg-deleted" : ""}${selectionMode ? " msg-selectable" : ""}${selected ? " msg-selected" : ""}`}
+      className={`msg msg-${m.role}${isDeleted ? " msg-deleted" : ""}${selectionMode ? " msg-selectable" : ""}${selected ? " msg-selected" : ""}${isCompleted ? " msg-completed" : ""}`}
       onClick={selectionMode && !editing ? () => onToggleSelect?.(m) : undefined}
     >
       {selectionMode && (
@@ -186,8 +199,21 @@ function MessageItem({
               ↳ thread
             </button>
           )}
-          {!isDeleted && !editing && (onEditSave || onDelete) && (
+          {!isDeleted && !editing && !selectionMode && (onEditSave || onDelete || onToggleComplete) && (
             <span className="msg-actions">
+              {onToggleComplete && (
+                <button
+                  className={`msg-complete-toggle${isCompleted ? " checked" : ""}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void onToggleComplete(m);
+                  }}
+                  title={isCompleted ? `완료됨 · ${m.completed_at ? formatTime(m.completed_at) : ""} · 클릭으로 해제` : "완료 표시"}
+                  aria-label={isCompleted ? "완료 해제" : "완료 표시"}
+                >
+                  ✓
+                </button>
+              )}
               {onEditSave && (
                 <button className="msg-action-btn" onClick={startEdit} title="편집">
                   편집
@@ -226,7 +252,7 @@ function MessageItem({
                 <span className="msg-edit-hint">Enter 저장 · Shift+Enter 줄바꿈 · Esc 취소</span>
               </div>
             </div>
-          ) : m.role === "user" || m.role === "system" ? (
+          ) : (m.role === "user" || m.role === "system") && !/!\[[^\]]*\]\(/.test(m.content) ? (
             <Linkified text={m.content} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />
           ) : (
             <Markdown
@@ -242,12 +268,17 @@ function MessageItem({
           <ToolCallChips calls={m.tool_calls} />
         )}
         {!isDeleted && threadSummary && threadSummary.reply_count > 0 && onOpenThread && (
-          <button className="reply-chip" onClick={onOpenThread} title="스레드 열기">
+          <button
+            className={`reply-chip${threadUnread ? " has-unread" : ""}`}
+            onClick={onOpenThread}
+            title={threadUnread ? "스레드 열기 — 새 메시지" : "스레드 열기"}
+          >
             <span className="reply-chip-mark">↳</span>
             <span className="reply-chip-count">{threadSummary.reply_count}개의 댓글</span>
             {threadSummary.last_at && (
               <span className="reply-chip-last">· {formatTime(threadSummary.last_at)}</span>
             )}
+            {threadUnread && <span className="unread-dot" aria-label="새 메시지" />}
           </button>
         )}
       </div>

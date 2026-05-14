@@ -16,6 +16,7 @@ import type { Session, Channel, Workspace, Thread } from "../types";
 import {
   startDebate as createDebateSession,
   getActiveDebateForChannel,
+  getDebate,
   endDebate,
   totalSpeeches,
 } from "./debate";
@@ -43,6 +44,7 @@ export async function runSlash(
   command: string,
   args: string[],
   activeSession?: Session | null,
+  thread?: Thread | null,
 ): Promise<SlashResult> {
   switch (command) {
     case "session":
@@ -54,33 +56,49 @@ export async function runSlash(
     case "workspace":
       return runWorkspace(args);
     case "debate":
-      return runDebate(channel, activeSession ?? null, args);
+      return runDebate(channel, activeSession ?? null, args, thread ?? null);
     default:
       return { ok: false, message: `unknown command: /${command}` };
   }
 }
 
 // ===== /debate =====
+// thread context가 주어지면(스레드 안 호출):
+//   - end:    이 thread의 debate 우선, 없으면 채널 활성 debate
+//   - status: 이 thread의 debate 우선, 없으면 채널 활성 debate
+//   - 주제:   이 thread에서 바로 시작 (이미 debate row가 있으면 거절)
 async function runDebate(
   channel: Channel,
   activeSession: Session | null,
   args: string[],
+  thread: Thread | null,
 ): Promise<SlashResult> {
   const sub = args[0];
 
   if (sub === "end") {
-    const active = await getActiveDebateForChannel(channel.id);
-    if (!active) return { ok: false, message: "이 채널에 진행 중인 토론이 없습니다." };
-    await endDebate(active.thread_id, "user_command");
+    let target = thread ? await getDebate(thread.id) : null;
+    if (target && target.ended) target = null;
+    if (!target) target = await getActiveDebateForChannel(channel.id);
+    if (!target) {
+      return {
+        ok: false,
+        message: thread
+          ? "이 스레드/채널에 진행 중인 토론이 없습니다."
+          : "이 채널에 진행 중인 토론이 없습니다.",
+      };
+    }
+    await endDebate(target.thread_id, "user_command");
     return {
       ok: true,
-      message: `토론 종료 (thread=${active.thread_id.slice(0, 8)}…)`,
+      message: `토론 종료 (thread=${target.thread_id.slice(0, 8)}…)`,
       debate: { kind: "end" },
     };
   }
 
   if (sub === "status") {
-    const active = await getActiveDebateForChannel(channel.id);
+    let active = thread ? await getDebate(thread.id) : null;
+    if (active && active.ended) active = null;
+    if (!active) active = await getActiveDebateForChannel(channel.id);
     if (!active) return { ok: true, message: "진행 중인 토론 없음." };
     return {
       ok: true,
@@ -106,6 +124,19 @@ async function runDebate(
     };
   }
 
+  // thread 안에서 호출된 경우 — 이미 같은 thread에 debate row가 있으면 거절
+  if (thread) {
+    const existing = await getDebate(thread.id);
+    if (existing) {
+      return {
+        ok: false,
+        message: existing.ended
+          ? "이 스레드에는 이미 종료된 debate가 있습니다. 새 토론은 채널 본문에서 /debate <주제>로 시작하세요."
+          : "이 스레드에 이미 진행 중인 debate가 있습니다.",
+      };
+    }
+  }
+
   // 참여자 결정 — agent_ids 우선, 2명 미만이면 기본 페르소나로 채움
   let participants: string[] = [...channel.agent_ids];
   if (participants.length < 2) {
@@ -122,17 +153,18 @@ async function runDebate(
     };
   }
 
-  const { thread, firstSpeaker } = await createDebateSession({
+  const { thread: targetThread, firstSpeaker } = await createDebateSession({
     topic,
     channel,
     session: activeSession,
     participants,
+    existingThread: thread ?? undefined,
   });
 
   return {
     ok: true,
     message: `🎬 토론 시작 — "${topic}" (첫 발화자: @${firstSpeaker})`,
-    debate: { kind: "start", thread, firstSpeaker, participants, topic },
+    debate: { kind: "start", thread: targetThread, firstSpeaker, participants, topic },
   };
 }
 

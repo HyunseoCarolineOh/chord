@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { deleteAttachments, extractAttachmentPaths } from "./attachments";
 import type { Message, MessageRole } from "../types";
 
 type InsertOpts = {
@@ -32,17 +33,36 @@ export async function updateMessage(
 }
 
 export async function softDeleteMessage(id: string): Promise<void> {
+  // 삭제 전 본문에서 첨부 경로 수집 → soft-delete 후 storage 정리
+  const { data: row } = await supabase
+    .from("chord_messages")
+    .select("content")
+    .eq("id", id)
+    .single();
   const { error } = await supabase
     .from("chord_messages")
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw error;
+  if (row?.content) {
+    const paths = extractAttachmentPaths(row.content);
+    if (paths.length > 0) await deleteAttachments(paths);
+  }
 }
 
 export async function editMessageContent(id: string, content: string): Promise<void> {
   const { error } = await supabase
     .from("chord_messages")
     .update({ content, edited_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+/** 메시지의 완료 표시 토글. completed=true면 현재 시각 기록, false면 NULL로 되돌림. */
+export async function setMessageCompleted(id: string, completed: boolean): Promise<void> {
+  const { error } = await supabase
+    .from("chord_messages")
+    .update({ completed_at: completed ? new Date().toISOString() : null })
     .eq("id", id);
   if (error) throw error;
 }
@@ -59,7 +79,10 @@ export async function softDeleteThreadMessagesAfter(
     .eq("thread_id", threadId)
     .gt("created_at", afterIso)
     .is("deleted_at", null)
-    .select("id");
+    .select("id, content");
   if (error) throw error;
-  return data?.length ?? 0;
+  const rows = (data ?? []) as { id: string; content: string }[];
+  const paths = rows.flatMap((r) => extractAttachmentPaths(r.content ?? ""));
+  if (paths.length > 0) await deleteAttachments(paths);
+  return rows.length;
 }

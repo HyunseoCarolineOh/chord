@@ -1,10 +1,28 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
-import { openLink } from "../lib/openers";
-import { linkifyChildren } from "./Linkified";
+import { openLink, stripLineSuffix } from "../lib/openers";
+import { linkifyChildren, Linkified } from "./Linkified";
+
+// 코드 블록/인라인 코드 안에서 첫 번째 파일 경로 추출.
+// Linkified의 TOKEN_RE와 호환되는 패턴 — Windows abs, POSIX abs, 상대 경로 (확장자 필수).
+const FILE_PATH_RE =
+  /(?:[A-Za-z]:[/\\][^\s)\]<>"']*?\.[a-zA-Z][a-zA-Z0-9]{0,8}(?::\d+(?::\d+)?)?)|(?:\/[^\s)\]<>"']*?\.[a-zA-Z][a-zA-Z0-9]{0,8}(?::\d+(?::\d+)?)?)|(?:(?:\.{1,2}\/|[\w.-]+\/)[\w./\\-]*?\.[a-zA-Z][a-zA-Z0-9]{0,8}(?::\d+(?::\d+)?)?)/;
+
+function extractFirstFilePath(text: string): string | null {
+  // 트레일링 구두점 제거는 Linkified와 동일
+  const m = text.match(FILE_PATH_RE);
+  if (!m) return null;
+  let raw = m[0];
+  while (raw.length > 0 && /[.,;:!?)]$/.test(raw)) {
+    if (/:\d+(?::\d+)?$/.test(raw)) break;
+    raw = raw.slice(0, -1);
+  }
+  return raw || null;
+}
 
 type Props = {
   children: string;
@@ -83,6 +101,30 @@ function CardOptions({
         })}
       </div>
     </div>
+  );
+}
+
+function OpenFileButton({
+  path,
+  onOpenFile,
+}: {
+  path: string;
+  onOpenFile: (p: string, line?: number, col?: number) => void;
+}) {
+  const { path: clean, line, col } = stripLineSuffix(path);
+  return (
+    <button
+      type="button"
+      className="code-open"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onOpenFile(clean, line, col);
+      }}
+      title={`파일 열기 · ${clean}${line ? `:${line}` : ""}`}
+    >
+      📂 open
+    </button>
   );
 }
 
@@ -181,7 +223,7 @@ export function Markdown({ children, workspaceRoot, onOpenFile, onPickOption }: 
   return (
     <div className="md">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={[rehypeHighlight]}
         components={{
           a: ({ node: _n, href, children, ...rest }) => (
@@ -205,12 +247,36 @@ export function Markdown({ children, workspaceRoot, onOpenFile, onPickOption }: 
               return <CardOptions raw={text} onPickOption={onPickOption} />;
             }
 
+            const firstPath = onOpenFile ? extractFirstFilePath(text) : null;
+
             return (
               <div className="code-wrap">
-                <CopyButton text={text} />
+                <div className="code-actions">
+                  {firstPath && onOpenFile && (
+                    <OpenFileButton path={firstPath} onOpenFile={onOpenFile} />
+                  )}
+                  <CopyButton text={text} />
+                </div>
                 <pre>{children}</pre>
               </div>
             );
+          },
+          code: ({ node: _n, className, children, ...rest }) => {
+            // 코드 블록(```) 안 code 태그는 pre가 처리하므로 className에 language-* 가 있음
+            // 그 경우엔 기본 처리(highlight.js 스타일) 유지
+            const isBlock = typeof className === "string" && className.includes("language-");
+            if (isBlock) {
+              return <code className={className} {...rest}>{children}</code>;
+            }
+            // 인라인 코드 — 내용이 단순 텍스트면 Linkified 처리
+            if (typeof children === "string") {
+              return (
+                <code {...rest}>
+                  <Linkified text={children} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />
+                </code>
+              );
+            }
+            return <code {...rest}>{children}</code>;
           },
           p: ({ node: _n, children }) => <p>{linkifyChildren(children, linkCtx)}</p>,
           li: ({ node: _n, children, ...rest }) => (
@@ -221,6 +287,16 @@ export function Markdown({ children, workspaceRoot, onOpenFile, onPickOption }: 
           ),
           blockquote: ({ node: _n, children }) => (
             <blockquote>{linkifyChildren(children, linkCtx)}</blockquote>
+          ),
+          img: ({ node: _n, src, alt, ...rest }) => (
+            <img
+              {...rest}
+              src={src}
+              alt={alt ?? ""}
+              loading="lazy"
+              className="md-img"
+              onClick={() => src && void openLink(src, linkCtx)}
+            />
           ),
         }}
       >
