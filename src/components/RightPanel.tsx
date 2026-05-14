@@ -278,6 +278,15 @@ export function RightPanel({
 
   useEffect(() => { void reloadCtxFiles(); }, [reloadCtxFiles]);
 
+  // 창 포커스가 chord로 돌아올 때 컨텍스트 파일 재스캔.
+  // memory 파일은 외부(Claude Code 등)에서 추가되므로 file watcher 대신
+  // 가장 가벼운 방식으로 stale을 풀어준다.
+  useEffect(() => {
+    function onFocus() { void reloadCtxFiles(); }
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [reloadCtxFiles]);
+
   function onDragOver(e: DragEvent<HTMLDivElement>) {
     if (!activeSession) return;
     if (e.dataTransfer.types.includes("application/x-chord-file")) {
