@@ -29,3 +29,8 @@ sidecar/dist/
 *.njsproj
 *.sln
 *.sw?
+
+# local env
+.env
+.env.*
+!.env.example
